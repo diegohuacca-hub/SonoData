@@ -1,0 +1,25 @@
+# ─── Gateway SonoData TEA — dependencias Python ───────────────────────────────
+# Instalar con: pip install -r requirements.txt
+
+# IA de audio
+tensorflow==2.15.0
+tensorflow-hub==0.15.0
+
+# Audio
+sounddevice==0.4.6
+numpy==1.26.4
+scipy==1.12.0
+
+# Vision / reconocimiento facial
+opencv-python==4.9.0.80
+mediapipe==0.10.9
+
+# Mi Band 8 BLE
+bleak==0.21.1
+
+# Firebase
+firebase-admin==6.4.0
+requests==2.31.0
+
+# Utilidades
+python-dotenv==1.0.1

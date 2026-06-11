@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env.local
+.env.*.local
+*.log
+.DS_Store
+.firebase/
+packages/gateway/myvenv/
+packages/gateway/.env
+packages/gateway/serviceAccountKey.json
+**/__pycache__/
+**/*.pyc

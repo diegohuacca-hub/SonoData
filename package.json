@@ -1,0 +1,17 @@
+{
+  "name": "tea-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "web": "npm run dev --workspace=packages/web",
+    "mobile": "npm run start --workspace=packages/mobile",
+    "functions": "npm run serve --workspace=packages/functions",
+    "gateway": "npm run start --workspace=packages/gateway"
+  },
+  "dependencies": {
+    "firebase": "^12.12.1"
+  }
+}

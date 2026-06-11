@@ -1,0 +1,83 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "bitacora",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "alumnoId",   "order": "ASCENDING" },
+        { "fieldPath": "fecha",      "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "bitacora",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "alumnoId",    "order": "ASCENDING" },
+        { "fieldPath": "tipo",        "order": "ASCENDING" },
+        { "fieldPath": "fecha",       "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "bitacora",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "alumnoId",    "order": "ASCENDING" },
+        { "fieldPath": "severidad",   "order": "ASCENDING" },
+        { "fieldPath": "fecha",       "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "bitacora",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "alumnoId",               "order": "ASCENDING" },
+        { "fieldPath": "requiereSeguimiento",     "order": "ASCENDING" },
+        { "fieldPath": "seguimientoResuelto",     "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "alertas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "alumnoId",   "order": "ASCENDING" },
+        { "fieldPath": "timestamp",  "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "alertas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "alumnoId",   "order": "ASCENDING" },
+        { "fieldPath": "resuelta",   "order": "ASCENDING" },
+        { "fieldPath": "timestamp",  "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sensores",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "alumnoId",   "order": "ASCENDING" },
+        { "fieldPath": "tipo",       "order": "ASCENDING" },
+        { "fieldPath": "timestamp",  "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "mapa_sensorial",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "alumnoId",     "order": "ASCENDING" },
+        { "fieldPath": "canal",        "order": "ASCENDING" },
+        { "fieldPath": "scorePrioridad", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "alumnos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "instId",   "order": "ASCENDING" },
+        { "fieldPath": "activo",   "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

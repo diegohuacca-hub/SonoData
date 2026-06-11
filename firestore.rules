@@ -1,0 +1,192 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Funciones de ayuda ────────────────────────────────────────────────────
+
+    // Verifica si el usuario está autenticado
+    function estaAutenticado() {
+      return request.auth != null;
+    }
+
+    // Obtiene el perfil del usuario desde Firestore
+    function perfilUsuario() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+    }
+
+    // Verifica si el usuario tiene un rol específico
+    function tieneRol(rol) {
+      return estaAutenticado() && perfilUsuario().rol == rol;
+    }
+
+    // Verifica si el usuario pertenece a una familia
+    function perteneceAFamilia(familiaId) {
+      return estaAutenticado() && perfilUsuario().familiaId == familiaId;
+    }
+
+    // Verifica si el usuario es tutor del alumno
+    function esTutorDelAlumno(alumnoId) {
+      return estaAutenticado() &&
+        request.auth.uid in get(/databases/$(database)/documents/alumnos/$(alumnoId)).data.tutoresUids;
+    }
+
+    // Verifica si el usuario es terapeuta asignado al alumno
+    function esTerapeutaDelAlumno(alumnoId) {
+      return estaAutenticado() &&
+        request.auth.uid in get(/databases/$(database)/documents/alumnos/$(alumnoId)).data.terapeutasUids;
+    }
+
+    // Verifica si el usuario es docente asignado al alumno
+    function esDocenteDelAlumno(alumnoId) {
+      return estaAutenticado() &&
+        request.auth.uid in get(/databases/$(database)/documents/alumnos/$(alumnoId)).data.docentesUids;
+    }
+
+    // Verifica si el usuario tiene acceso profesional al alumno
+    function esProfesionalDelAlumno(alumnoId) {
+      return esTerapeutaDelAlumno(alumnoId) || esDocenteDelAlumno(alumnoId);
+    }
+
+    // Verifica si tiene cualquier acceso al alumno
+    function tieneAccesoAlAlumno(alumnoId) {
+      return esTutorDelAlumno(alumnoId) || esProfesionalDelAlumno(alumnoId);
+    }
+
+    // Verifica visibilidad de un registro de bitácora
+    function puedeVerRegistro(registro) {
+      let vis = registro.data.visibilidad;
+      let alumnoId = registro.data.alumnoId;
+      return (vis == 'todos' && tieneAccesoAlAlumno(alumnoId)) ||
+             (vis == 'profesional' && esProfesionalDelAlumno(alumnoId)) ||
+             (vis == 'borrador' && registro.data.autorUid == request.auth.uid);
+    }
+
+    // ─── Instituciones ─────────────────────────────────────────────────────────
+    match /instituciones/{instId} {
+      allow read: if estaAutenticado() && perfilUsuario().instId == instId;
+      allow create: if tieneRol('admin');
+      allow update: if tieneRol('admin') && perfilUsuario().instId == instId;
+      allow delete: if false; // nunca se eliminan instituciones
+    }
+
+    // ─── Usuarios (perfiles) ───────────────────────────────────────────────────
+    match /usuarios/{uid} {
+      // Cada usuario solo puede leer su propio perfil
+      allow read: if estaAutenticado() && request.auth.uid == uid;
+      // Solo Cloud Functions crean perfiles (via Admin SDK)
+      allow create: if false;
+      // El usuario puede actualizar algunos campos propios (no el rol ni familiaId)
+      allow update: if estaAutenticado() &&
+                       request.auth.uid == uid &&
+                       !('rol' in request.resource.data.diff(resource.data).affectedKeys()) &&
+                       !('familiaId' in request.resource.data.diff(resource.data).affectedKeys());
+      allow delete: if false;
+    }
+
+    // ─── Alumnos ───────────────────────────────────────────────────────────────
+    match /alumnos/{alumnoId} {
+      // Padre ve todo; terapeuta y docente ven campos limitados
+      allow read: if tieneAccesoAlAlumno(alumnoId);
+      // Solo admin o Cloud Functions crean alumnos
+      allow create: if tieneRol('admin');
+      // Padre puede actualizar umbrales; admin puede actualizar todo
+      allow update: if (esTutorDelAlumno(alumnoId) &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['umbrales', 'sensibilidades'])) ||
+                       tieneRol('admin');
+      // Borrado lógico solo por admin (activo = false)
+      allow delete: if false;
+    }
+
+    // ─── Sesiones terapéuticas ─────────────────────────────────────────────────
+    match /alumnos/{alumnoId}/sesiones/{sesionId} {
+      allow read: if tieneAccesoAlAlumno(alumnoId);
+      // Solo el terapeuta asignado puede crear/abrir sesiones
+      allow create: if esTerapeutaDelAlumno(alumnoId);
+      // Solo se puede modificar si no está en readOnly
+      // Solo el terapeuta que la abrió puede cerrarla
+      allow update: if esTerapeutaDelAlumno(alumnoId) &&
+                       resource.data.readOnly == false;
+      allow delete: if false;
+    }
+
+    // ─── Bitácora ──────────────────────────────────────────────────────────────
+    match /alumnos/{alumnoId}/bitacora/{registroId} {
+      // La visibilidad del registro determina quién puede leerlo
+      allow read: if puedeVerRegistro(resource);
+      // Terapeuta y docente pueden crear registros
+      allow create: if esProfesionalDelAlumno(alumnoId) &&
+                       request.resource.data.autorUid == request.auth.uid;
+      // No se puede modificar un registro inmutable
+      // Solo el autor puede modificarlo en las primeras 2h
+      allow update: if esProfesionalDelAlumno(alumnoId) &&
+                       resource.data.autorUid == request.auth.uid &&
+                       resource.data.inmutable == false &&
+                       !('tipo' in request.resource.data.diff(resource.data).affectedKeys()) &&
+                       !('severidad' in request.resource.data.diff(resource.data).affectedKeys());
+      allow delete: if false;
+    }
+
+    // ─── Mapa sensorial ────────────────────────────────────────────────────────
+    match /alumnos/{alumnoId}/mapa_sensorial/{estimuloId} {
+      allow read: if tieneAccesoAlAlumno(alumnoId);
+      // Terapeuta y docente crean estímulos manualmente
+      allow create: if esProfesionalDelAlumno(alumnoId);
+      // Padre puede actualizar estrategias y notas; profesional puede actualizar todo
+      allow update: if (esTutorDelAlumno(alumnoId) &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['estrategias', 'notas'])) ||
+                       esProfesionalDelAlumno(alumnoId);
+      // Cloud Functions actualiza impacto automáticamente (via Admin SDK, sin restricción)
+      allow delete: if esProfesionalDelAlumno(alumnoId);
+    }
+
+    // ─── Alertas ───────────────────────────────────────────────────────────────
+    match /alumnos/{alumnoId}/alertas/{alertaId} {
+      allow read: if tieneAccesoAlAlumno(alumnoId);
+      // Solo Cloud Functions crean alertas (Admin SDK)
+      allow create: if false;
+      // Padre puede marcar como resuelta; profesional también
+      allow update: if tieneAccesoAlAlumno(alumnoId) &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['resuelta']);
+      allow delete: if false;
+    }
+
+    // ─── Datos de sensores (historial archivado) ───────────────────────────────
+    match /alumnos/{alumnoId}/sensores/{lecturaId} {
+      // Solo padre y terapeuta ven biométricos
+      allow read: if esTutorDelAlumno(alumnoId) || esTerapeutaDelAlumno(alumnoId);
+      // Solo Cloud Functions escriben desde el gateway (Admin SDK)
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // ─── Reportes ──────────────────────────────────────────────────────────────
+    match /alumnos/{alumnoId}/reportes/{reporteId} {
+      allow read: if tieneAccesoAlAlumno(alumnoId);
+      // Solo Cloud Functions generan reportes
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // ─── Audit logs ────────────────────────────────────────────────────────────
+    match /audit_logs/{logId} {
+      // Solo admin puede leer los logs
+      allow read: if tieneRol('admin');
+      // Solo Cloud Functions escriben logs (Admin SDK)
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // ─── Bloqueo por defecto ───────────────────────────────────────────────────
+    // Cualquier ruta no especificada arriba queda bloqueada
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
