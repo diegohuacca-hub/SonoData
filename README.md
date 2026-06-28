@@ -244,4 +244,4 @@ npm run dev
 
 ## 📄 Licencia
 
-Proyecto académico — TECSUP Arequipa, Tecnologías Emergentes, 5to Ciclo — 2025.
+Proyecto académico — TECSUP Arequipa, Tecnologías Emergentes, 4to Ciclo — 2025.
