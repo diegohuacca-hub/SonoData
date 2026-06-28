@@ -1,11 +1,14 @@
 """
-yamnet_listener.py — Pipeline de audio con YAMNet v2
-Mejoras sobre v1:
-  1. Votación temporal — confirma sonido en 3 frames antes de reportar
+yamnet_listener.py — Pipeline de audio con YAMNet v3
+Mejoras sobre v2:
+  1. Votación temporal — confirma sonido en N frames antes de reportar
   2. Agrupación por categorías — timbre/campana/ding-dong → "Timbre"
   3. Cooldown por categoría — evita spam del mismo sonido
   4. Umbral de dB adaptativo — calibra según ruido de fondo del ambiente
   5. Confianza mínima por categoría — algunos sonidos requieren más certeza
+  6. [NUEVO] Suma de probabilidades por categoría — agrega scores de clases
+     relacionadas en lugar de tomar solo el máximo. Mejora la detección de
+     sonidos que YAMNet reparte entre varias clases (perro, timbre, sirena).
 
 El audio NUNCA se guarda ni se envía a ningún servidor.
 Solo el evento clasificado viaja a Firebase.
@@ -32,15 +35,18 @@ if DEVICE_INDEX:
     DEVICE_INDEX = int(DEVICE_INDEX)
 
 # ─── Parámetros de votación y filtrado ────────────────────────────────────────
-FRAMES_CONFIRMACION = 3      # frames consecutivos para confirmar un sonido
+FRAMES_CONFIRMACION = 3      # frames consecutivos para confirmar (default por categoría)
 COOLDOWN_SEGUNDOS   = 3      # segundos mínimos entre reportes de la misma categoría
-CONFIANZA_MIN_BASE  = 0.65   # confianza mínima global
+CONFIANZA_MIN_BASE  = 0.65   # confianza mínima global (no usado, cada cat tiene la suya)
 DB_MIN_BASE         = 10     # dB mínimo global
-CALIBRACION_FRAMES  = 10    # frames para calibrar ruido de fondo al inicio
+CALIBRACION_FRAMES  = 10     # frames para calibrar ruido de fondo al inicio
+
+# ─── Suavizado de scores (capa nueva) ──────────────────────────────────────────
+# Promedia los scores de YAMNet sobre las últimas N ventanas antes de decidir.
+# Reduce el ruido frame a frame y estabiliza la detección.
+SUAVIZADO_VENTANAS  = 2      # cuántos frames promediar (1 = desactivado)
 
 # ─── Categorías agrupadas ─────────────────────────────────────────────────────
-# Agrupa clases similares bajo un nombre común
-# Esto reduce falsos negativos cuando YAMNet varía entre clases parecidas
 CATEGORIAS = {
     'Timbre / teléfono': {
         'clases':    [195, 196, 349, 350, 383, 384, 385, 386, 387, 388, 389, 392],
@@ -60,7 +66,7 @@ CATEGORIAS = {
     },
     'Voz / multitud': {
         'clases':    [0, 1, 63, 64, 65, 66, 137],
-        'confianza': 0.35,
+        'confianza': 0.45,
         'db_min':    20,
         'severidad': 1,
         'emoji':     '🗣️',
@@ -75,13 +81,13 @@ CATEGORIAS = {
         'frames':    2,
     },
     'Maquinaria ruidosa': {
-    'clases':    [339, 340, 341, 362, 363, 367, 371, 
-                  405, 406, 407, 412, 413, 414, 415, 418, 419],
-    'confianza': 0.35,
-    'db_min':    20,
-    'severidad': 4,
-    'emoji':     '⚙️',
-    'frames':    2,
+        'clases':    [339, 340, 341, 362, 363, 367, 371,
+                      405, 406, 407, 412, 413, 414, 415, 418, 419],
+        'confianza': 0.35,
+        'db_min':    20,
+        'severidad': 4,
+        'emoji':     '⚙️',
+        'frames':    2,
     },
     'Tráfico': {
         'clases':    [300, 301, 302, 306, 307, 310, 315, 319, 320, 321, 323, 333],
@@ -92,8 +98,8 @@ CATEGORIAS = {
         'frames':    2,
     },
     'Música alta': {
-        'clases':    [211, 212, 214, 215, 234, 240,132],
-        'confianza': 0.35,
+        'clases':    [211, 212, 214, 215, 234, 240, 132],
+        'confianza': 0.40,
         'db_min':    15,
         'severidad': 3,
         'emoji':     '🎵',
@@ -108,7 +114,7 @@ CATEGORIAS = {
         'frames':    1,
     },
     'Portazo': {
-        'clases':    [352, 498, 455, 448, 500, 156, 348, 353,345],
+        'clases':    [352, 498, 455, 448, 500, 156, 348, 353, 345],
         'confianza': 0.20,
         'db_min':    15,
         'severidad': 2,
@@ -141,7 +147,7 @@ CATEGORIAS = {
     },
     'Ruido de fondo': {
         'clases':    [513, 518, 519],
-        'confianza': 0.35,
+        'confianza': 0.45,
         'db_min':    15,
         'severidad': 2,
         'emoji':     '📺',
@@ -149,7 +155,7 @@ CATEGORIAS = {
     },
 }
 
-# Mapa inverso: clase_idx → nombre_categoria
+# Mapa inverso: clase_idx → nombre_categoria (para referencia/debug)
 _CLASE_A_CATEGORIA: dict[int, str] = {}
 for cat_nombre, cat_data in CATEGORIAS.items():
     for clase_idx in cat_data['clases']:
@@ -161,7 +167,10 @@ _modelo       = None
 _corriendo    = False
 
 # Votación temporal: deque de las últimas N clasificaciones
-_ventana_votos: deque = deque(maxlen=FRAMES_CONFIRMACION)
+_ventana_votos: deque = deque(maxlen=max(f.get('frames', FRAMES_CONFIRMACION) for f in CATEGORIAS.values()))
+
+# Suavizado: buffer de los últimos vectores de scores
+_buffer_scores: deque = deque(maxlen=SUAVIZADO_VENTANAS)
 
 # Cooldown: timestamp del último reporte por categoría
 _ultimo_reporte: dict[str, float] = {}
@@ -195,21 +204,30 @@ def calcular_db(audio: np.ndarray) -> float:
 
 
 def calibrar_ruido_fondo(db_actual: float):
-    """
-    Calibra el umbral de dB adaptativo según el ruido de fondo del ambiente.
-    Se actualiza continuamente con un promedio móvil suavizado.
-    """
+    """Calibra el umbral de dB adaptativo con promedio móvil suavizado."""
     global _db_fondo
-    # Promedio exponencial — el fondo se adapta lentamente
     _db_fondo = 0.95 * _db_fondo + 0.05 * db_actual
 
 
-def clasificar_chunk(audio: np.ndarray) -> tuple[str|None, float, float, int]:
+def _score_por_categoria(scores_mean: np.ndarray) -> dict[str, float]:
     """
-    Clasifica un chunk con YAMNet.
+    CAPA NUEVA: suma las probabilidades de todas las clases de cada categoría.
+    Un perro que reparte 30%+25%+20% entre clases 67/68/69 da 75% total,
+    en lugar de solo 30% con argmax. La suma se limita a 1.0.
+    """
+    resultado: dict[str, float] = {}
+    for cat_nombre, cat_data in CATEGORIAS.items():
+        suma = float(np.sum([scores_mean[idx] for idx in cat_data['clases']]))
+        resultado[cat_nombre] = min(suma, 1.0)
+    return resultado
+
+
+def clasificar_chunk(audio: np.ndarray) -> tuple[str | None, float, float, int]:
+    """
+    Clasifica un chunk con YAMNet usando suma de probabilidades por categoría.
     Retorna (categoria, confianza, db, severidad) o (None, conf, db, 0)
     """
-    global _modelo, _ventana_votos, _ultimo_reporte, _db_fondo
+    global _modelo, _ventana_votos, _ultimo_reporte, _db_fondo, _buffer_scores
 
     if _modelo is None:
         return None, 0.0, 0.0, 0
@@ -217,61 +235,57 @@ def clasificar_chunk(audio: np.ndarray) -> tuple[str|None, float, float, int]:
     scores, _, _ = _modelo(audio)
     scores_np    = scores.numpy()
     scores_mean  = np.mean(scores_np, axis=0)
-    clase_idx    = int(np.argmax(scores_mean))
-    confianza    = float(scores_mean[clase_idx])
     db           = calcular_db(audio)
-    
+
+    # ── Suavizado temporal de scores (capa nueva) ─────────────────────────────
+    _buffer_scores.append(scores_mean)
+    scores_suav = np.mean(_buffer_scores, axis=0)
+
     # Actualizar calibración de ruido de fondo
     calibrar_ruido_fondo(db)
 
-    # Umbral dinámico: DB_MIN_BASE o fondo + 8dB (lo que sea mayor)
+    # Umbral dinámico
     db_umbral = max(DB_MIN_BASE, _db_fondo + 5)
 
-    # ── Verificar si la clase pertenece a alguna categoría ────────────────────
-    categoria = _CLASE_A_CATEGORIA.get(clase_idx)
+    # ── Suma de probabilidades por categoría (capa nueva) ─────────────────────
+    scores_cat = _score_por_categoria(scores_suav)
+    categoria  = max(scores_cat, key=scores_cat.get)
+    confianza  = scores_cat[categoria]
 
-    if categoria is None:
-        # Solo resetear si hay 3 silencios consecutivos
+    cat_data = CATEGORIAS[categoria]
+
+    # ── Filtros de umbral ──────────────────────────────────────────────────────
+    paso_confianza = confianza >= cat_data['confianza']
+    paso_db        = db >= max(db_umbral, cat_data['db_min'])
+
+    if not (paso_confianza and paso_db):
+        # No pasa filtros — registrar silencio
         _ventana_votos.append(None)
         silencios = sum(1 for v in _ventana_votos if v is None)
         if silencios >= 3:
             _ventana_votos.clear()
-        # Reportar ruido muy fuerte aunque no sea categoría conocida
-        if db >= 85:
+        # Ruido muy fuerte aunque no sea categoría conocida
+        if db >= 85 and confianza < cat_data['confianza']:
             return 'Ruido muy fuerte', confianza, db, 3
-        return None, confianza, db, 0
-
-    cat_data = CATEGORIAS[categoria]
-
-    # Verificar umbrales específicos de la categoría
-    if confianza < cat_data['confianza']:
-        _ventana_votos.append(None)
-        return None, confianza, db, 0
-
-    if db < max(db_umbral, cat_data['db_min']):
-        _ventana_votos.append(None)
         return None, confianza, db, 0
 
     # ── Votación temporal ─────────────────────────────────────────────────────
     _ventana_votos.append(categoria)
-
-    # Contar cuántas veces aparece esta categoría en la ventana
     votos = sum(1 for v in _ventana_votos if v == categoria)
 
     frames_necesarios = cat_data.get('frames', FRAMES_CONFIRMACION)
     if votos < frames_necesarios:
-        # No hay suficiente confirmación todavía
         return None, confianza, db, 0
 
     # ── Cooldown ───────────────────────────────────────────────────────────────
-    ahora = time.time()
+    ahora  = time.time()
     ultimo = _ultimo_reporte.get(categoria, 0)
     if ahora - ultimo < COOLDOWN_SEGUNDOS:
         return None, confianza, db, 0
 
     # ── Confirmar evento ───────────────────────────────────────────────────────
     _ultimo_reporte[categoria] = ahora
-    _ventana_votos.clear()  # Resetear ventana después de confirmar
+    _ventana_votos.clear()
 
     return categoria, confianza, db, cat_data['severidad']
 
@@ -306,7 +320,7 @@ def iniciar(callback_evento):
     """
     Inicia el pipeline de audio mejorado.
     callback_evento(categoria, confianza, db, severidad) se llama
-    solo cuando el sonido es confirmado por votación temporal.
+    solo cuando el sonido es confirmado.
     """
     global _corriendo
 
@@ -319,9 +333,9 @@ def iniciar(callback_evento):
     hilo_captura.start()
 
     categorias_str = ', '.join(CATEGORIAS.keys())
-    print("[YAMNet] Pipeline activo v2 — votación temporal + categorías agrupadas")
+    print("[YAMNet] Pipeline activo v3 — suma de probabilidades + suavizado + votación")
     print(f"[YAMNet] Categorías: {categorias_str}")
-    print(f"[YAMNet] Confirmación: {FRAMES_CONFIRMACION} frames | Cooldown: {COOLDOWN_SEGUNDOS}s")
+    print(f"[YAMNet] Suavizado: {SUAVIZADO_VENTANAS} ventanas | Cooldown: {COOLDOWN_SEGUNDOS}s")
 
     try:
         frames_calibracion = 0
@@ -333,7 +347,6 @@ def iniciar(callback_evento):
             audio_chunk = _audio_queue.get()
             categoria, confianza, db, severidad = clasificar_chunk(audio_chunk)
 
-            # Período de calibración inicial
             if frames_calibracion < CALIBRACION_FRAMES:
                 frames_calibracion += 1
                 if frames_calibracion == CALIBRACION_FRAMES:
@@ -361,8 +374,8 @@ def detener():
 # ─── Prueba independiente ─────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("=" * 55)
-    print("  SonoData TEA — Test de audio YAMNet v2")
-    print("  Votación temporal + Categorías + Cooldown + Calibración")
+    print("  SonoData TEA — Test de audio YAMNet v3")
+    print("  Suma de probabilidades + Suavizado + Votación + Cooldown")
     print("=" * 55)
 
     listar_dispositivos()

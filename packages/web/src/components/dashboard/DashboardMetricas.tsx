@@ -15,18 +15,15 @@ export default function DashboardMetricas() {
   const { usuario } = useAuthStore()
   const sensores = useSensoresLive('familia_001', 'alumno_001')
 
-  // Sin gateway conectado — mostrar estado vacío
-  if (!sensores.conectado) {
+  if (!sensores.conectado && !sensores.wearable_conectado) {
     return (
       <div className="flex flex-col gap-4">
 
-        {/* Banner gateway desconectado */}
         <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
           <span className="w-2 h-2 rounded-full bg-gray-300 flex-shrink-0" />
           <span className="text-sm text-gray-500">Gateway desconectado — los sensores no están activos</span>
         </div>
 
-        {/* Bienvenida */}
         <Card className="text-center py-8">
           <div className="text-4xl mb-4">📊</div>
           <div className="font-semibold text-gray-900 text-lg mb-2">
@@ -38,7 +35,6 @@ export default function DashboardMetricas() {
           </div>
         </Card>
 
-        {/* Guía de primeros pasos según rol */}
         <Card>
           <SectionLabel>¿Por dónde empezar?</SectionLabel>
           <div className="flex flex-col gap-3">
@@ -68,7 +64,6 @@ export default function DashboardMetricas() {
           </div>
         </Card>
 
-        {/* Métricas vacías con placeholder */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 opacity-40">
           {[
             { label:'Atención',         unidad:'%'   },
@@ -89,16 +84,19 @@ export default function DashboardMetricas() {
     )
   }
 
-  // Con gateway conectado — mostrar datos reales
   return (
     <div className="flex flex-col gap-4">
 
+      {/* Banner estado conexión */}
       <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5">
         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
-        <span className="text-sm text-emerald-700 font-medium">Gateway conectado</span>
+        <span className="text-sm text-emerald-700 font-medium">
+          {sensores.conectado ? 'Gateway conectado' : 'Watch conectado'}
+        </span>
         <span className="text-sm text-emerald-500">— datos en tiempo real</span>
       </div>
 
+      {/* Alerta de sonido */}
       {sensores.audio_clase && (
         <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-2.5 flex items-center gap-2">
           <span className="text-red-500 text-lg">🔊</span>
@@ -107,24 +105,76 @@ export default function DashboardMetricas() {
         </div>
       )}
 
+      {/* Métricas principales */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-  { label:'Atención',        valor: sensores.atencion    > 0 ? `${sensores.atencion}%`     : 'Sin datos', sub:'Nivel cognitivo', color:'#1D9E75', pct:sensores.atencion,                       alerta:sensores.atencion > 0 && sensores.atencion < 40 },
-  { label:'Frec. cardíaca',  valor: sensores.fc_bpm      > 0 ? `${sensores.fc_bpm} bpm`   : 'Sin datos', sub:'Normal',          color:'#378ADD', pct:Math.min(100,(sensores.fc_bpm/150)*100), alerta:sensores.fc_bpm > 100 },
-  { label:'Actividad motora',valor: sensores.movimiento  > 0 ? `${sensores.movimiento}%`  : 'Sin datos', sub:'Moderada',        color:'#7F77DD', pct:sensores.movimiento,                     alerta:sensores.movimiento > 80 },
-  { label:'Nivel estrés',    valor: sensores.nivelEstres > 0 ? `${sensores.nivelEstres}%` : 'Sin datos', sub:'Calculado',       color:'#EF9F27', pct:sensores.nivelEstres,                    alerta:sensores.nivelEstres > 60 },
-].map(m => (
-  <Card key={m.label} className={`flex flex-col gap-2 ${m.alerta ? 'border-orange-300 bg-orange-50' : ''}`}>
-    <div className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">{m.label}</div>
-    <div className="text-2xl font-semibold" style={{ color: m.alerta ? '#D85A30' : m.valor === 'Sin datos' ? '#D1D5DB' : 'inherit' }}>{m.valor}</div>
-    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-      <div className="h-full rounded-full transition-all duration-700" style={{ width:`${m.pct}%`, background: m.alerta ? '#D85A30' : m.color }} />
-    </div>
-    <div className="text-[10px] text-gray-400">{m.alerta ? '⚠ Fuera de rango' : m.valor === 'Sin datos' ? 'Sensor no conectado' : m.sub}</div>
-  </Card>
-))}
+          { label:'Atención',        valor: sensores.atencion    > 0 ? `${sensores.atencion}%`     : 'Sin datos', sub:'Nivel cognitivo', color:'#1D9E75', pct:sensores.atencion,                       alerta:sensores.atencion > 0 && sensores.atencion < 40 },
+          { label:'Frec. cardíaca',  valor: sensores.fc_bpm      > 0 ? `${sensores.fc_bpm} bpm`   : 'Sin datos', sub:'Normal',          color:'#378ADD', pct:Math.min(100,(sensores.fc_bpm/150)*100), alerta:sensores.fc_bpm > 100 },
+          { label:'Actividad motora',valor: sensores.movimiento  > 0 ? `${sensores.movimiento}%`  : 'Sin datos', sub:'Moderada',        color:'#7F77DD', pct:sensores.movimiento,                     alerta:sensores.movimiento > 80 },
+          { label:'Nivel estrés',    valor: sensores.nivelEstres > 0 ? `${sensores.nivelEstres}%` : 'Sin datos', sub:'Calculado',       color:'#EF9F27', pct:sensores.nivelEstres,                    alerta:sensores.nivelEstres > 60 },
+        ].map(m => (
+          <Card key={m.label} className={`flex flex-col gap-2 ${m.alerta ? 'border-orange-300 bg-orange-50' : ''}`}>
+            <div className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">{m.label}</div>
+            <div className="text-2xl font-semibold" style={{ color: m.alerta ? '#D85A30' : m.valor === 'Sin datos' ? '#D1D5DB' : 'inherit' }}>{m.valor}</div>
+            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full rounded-full transition-all duration-700" style={{ width:`${m.pct}%`, background: m.alerta ? '#D85A30' : m.color }} />
+            </div>
+            <div className="text-[10px] text-gray-400">{m.alerta ? '⚠ Fuera de rango' : m.valor === 'Sin datos' ? 'Sensor no conectado' : m.sub}</div>
+          </Card>
+        ))}
       </div>
 
+      {/* Galaxy Watch 8 */}
+      {sensores.wearable_conectado ? (
+        <Card>
+          <SectionLabel>⌚ Galaxy Watch 8 — Datos fisiológicos</SectionLabel>
+          <div className="grid grid-cols-3 gap-3 mt-2">
+            <div className="flex flex-col items-center p-3 bg-red-50 rounded-xl border border-red-100">
+              <span className="text-2xl mb-1">❤️</span>
+              <span className="text-xl font-bold text-red-600">{sensores.wearable_fc}</span>
+              <span className="text-[10px] text-red-400 font-semibold uppercase tracking-wide">BPM</span>
+              {sensores.wearable_fc > 100 && (
+                <span className="text-[10px] text-orange-500 mt-1">⚠ Elevada</span>
+              )}
+            </div>
+            <div className="flex flex-col items-center p-3 bg-blue-50 rounded-xl border border-blue-100">
+              <span className="text-2xl mb-1">📊</span>
+              <span className="text-xl font-bold text-blue-600">{Math.round(sensores.wearable_hrv)}</span>
+              <span className="text-[10px] text-blue-400 font-semibold uppercase tracking-wide">HRV ms</span>
+              {sensores.wearable_hrv < 20 && sensores.wearable_hrv > 0 && (
+                <span className="text-[10px] text-orange-500 mt-1">⚠ Bajo</span>
+              )}
+            </div>
+            <div className="flex flex-col items-center p-3 rounded-xl border"
+              style={{
+                background: sensores.wearable_nivelEstres >= 3 ? '#FEF3C7' : '#F0FDF4',
+                borderColor: sensores.wearable_nivelEstres >= 3 ? '#FCD34D' : '#BBF7D0'
+              }}>
+              <span className="text-2xl mb-1">
+                {sensores.wearable_nivelEstres >= 4 ? '😰' : sensores.wearable_nivelEstres >= 2 ? '😟' : '😊'}
+              </span>
+              <span className="text-xl font-bold"
+                style={{ color: sensores.wearable_nivelEstres >= 3 ? '#D97706' : '#16A34A' }}>
+                {sensores.wearable_nivelEstres}/5
+              </span>
+              <span className="text-[10px] font-semibold uppercase tracking-wide"
+                style={{ color: sensores.wearable_nivelEstres >= 3 ? '#D97706' : '#16A34A' }}>
+                Estrés
+              </span>
+            </div>
+          </div>
+        </Card>
+      ) : (
+        <Card className="opacity-50">
+          <SectionLabel>⌚ Galaxy Watch 8</SectionLabel>
+          <div className="flex items-center gap-2 py-2">
+            <span className="text-gray-300 text-2xl">⌚</span>
+            <span className="text-sm text-gray-400">Watch no conectado — abre la app SonoData en el watch</span>
+          </div>
+        </Card>
+      )}
+
+      {/* Score de sesión + Emoción */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Card>
           <SectionLabel>Score de sesión</SectionLabel>
@@ -136,44 +186,44 @@ export default function DashboardMetricas() {
         </Card>
 
         <Card>
-  <SectionLabel>Estado emocional — detectado por cámara</SectionLabel>
-  {sensores.emocion_facial && sensores.emocion_facial !== 'neutral' ? (
-    <>
-      <div className="flex flex-col items-center py-4">
-        {EMOCIONES.filter(e => e.id === sensores.emocion_facial).map(e => (
-          <div key={e.id} className="flex flex-col items-center gap-2 py-3 px-6 rounded-xl border-2"
-            style={{ background:e.bg, borderColor:e.color }}>
-            <span className="text-4xl">{e.emoji}</span>
-            <span className="text-sm font-semibold" style={{ color:e.color }}>{e.label}</span>
-          </div>
-        ))}
-      </div>
-      <div className="flex flex-wrap gap-2 justify-center mt-1">
-        {EMOCIONES.filter(e => e.id !== sensores.emocion_facial).map(e => (
-          <div key={e.id} className="flex items-center gap-1 px-2 py-1 rounded-full bg-gray-50 border border-gray-100">
-            <span className="text-sm opacity-40">{e.emoji}</span>
-            <span className="text-[10px] text-gray-300">{e.label}</span>
-          </div>
-        ))}
-      </div>
-    </>
-  ) : (
-    <div className="flex flex-col items-center py-4 gap-2">
-      <span className="text-3xl opacity-30">😶</span>
-      <span className="text-xs text-gray-400">
-        {sensores.conectado ? 'Apunta la cámara al alumno' : 'Cámara no conectada'}
-      </span>
-      <div className="flex flex-wrap gap-2 justify-center mt-1">
-        {EMOCIONES.map(e => (
-          <div key={e.id} className="flex items-center gap-1 px-2 py-1 rounded-full bg-gray-50 border border-gray-100">
-            <span className="text-sm opacity-30">{e.emoji}</span>
-            <span className="text-[10px] text-gray-300">{e.label}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )}
-</Card>
+          <SectionLabel>Estado emocional — detectado por cámara</SectionLabel>
+          {sensores.emocion_facial && sensores.emocion_facial !== 'neutral' ? (
+            <>
+              <div className="flex flex-col items-center py-4">
+                {EMOCIONES.filter(e => e.id === sensores.emocion_facial).map(e => (
+                  <div key={e.id} className="flex flex-col items-center gap-2 py-3 px-6 rounded-xl border-2"
+                    style={{ background:e.bg, borderColor:e.color }}>
+                    <span className="text-4xl">{e.emoji}</span>
+                    <span className="text-sm font-semibold" style={{ color:e.color }}>{e.label}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2 justify-center mt-1">
+                {EMOCIONES.filter(e => e.id !== sensores.emocion_facial).map(e => (
+                  <div key={e.id} className="flex items-center gap-1 px-2 py-1 rounded-full bg-gray-50 border border-gray-100">
+                    <span className="text-sm opacity-40">{e.emoji}</span>
+                    <span className="text-[10px] text-gray-300">{e.label}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-col items-center py-4 gap-2">
+              <span className="text-3xl opacity-30">😶</span>
+              <span className="text-xs text-gray-400">
+                {sensores.conectado ? 'Apunta la cámara al alumno' : 'Cámara no conectada'}
+              </span>
+              <div className="flex flex-wrap gap-2 justify-center mt-1">
+                {EMOCIONES.map(e => (
+                  <div key={e.id} className="flex items-center gap-1 px-2 py-1 rounded-full bg-gray-50 border border-gray-100">
+                    <span className="text-sm opacity-30">{e.emoji}</span>
+                    <span className="text-[10px] text-gray-300">{e.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
       </div>
 
     </div>
